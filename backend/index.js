@@ -4,32 +4,40 @@ const cors = require("cors");
 const connectDB = require("./config/db");
 
 dotenv.config(); // Load environment variables from .env file
-connectDB(); // Connect to MongoDB
 
 const app = express();
 
-// Define allowed origins (update with your actual Vercel frontend URLs)
+// Define allowed origins (include preview deploys to avoid cross-origin blocks)
 const allowedOrigins = [
   'https://naye-pankh-intern-portal.vercel.app',  // Main frontend
-  'https://naye-pankh-intern-portal-ox93.vercel.app',  // Preview backend (if same)
-  'http://localhost:3000'  // Local frontend dev
+  'https://naye-pankh-intern-portal-ox93.vercel.app',  // Preview/backend
+  'http://localhost:3000'  // Local dev (adjust port if needed)
 ];
 
-// Explicit preflight handler for OPTIONS (required for Vercel serverless)
+// Global CORS pre-handler (runs before any middleware, handles all methods/paths)
 app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  
+  // Set CORS headers for all responses
+  if (allowedOrigins.includes(origin) || !origin) {
+    res.setHeader('Access-Control-Allow-Origin', origin || '*');
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+  } else {
+    res.setHeader('Access-Control-Allow-Origin', '*');  // Fallback for non-matching origins
+  }
+  
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  
+  // Handle preflight OPTIONS requests immediately (critical for /api/auth/signup POST)
   if (req.method === 'OPTIONS') {
-    const origin = req.headers.origin;
-    const originToAllow = allowedOrigins.includes(origin) ? origin : '*';
-    res.header('Access-Control-Allow-Origin', originToAllow);
-    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
-    res.header('Access-Control-Allow-Credentials', 'true');
     return res.status(200).end();
   }
+  
   next();
 });
 
-// CORS middleware with dynamic origin check
+// Optional: Use cors package as fallback (after manual headers)
 app.use(cors({
   origin: (origin, callback) => {
     if (!origin || allowedOrigins.includes(origin)) {
@@ -45,6 +53,12 @@ app.use(cors({
 
 app.use(express.json()); // Parse JSON request bodies
 
+// Connect to DB (use the updated async connectDB from previous response)
+connectDB().catch(err => {
+  console.error("Initial DB connection failed:", err.message);
+  // Don't exit; log and continue (serverless will retry per invocation)
+});
+
 // Routes
 app.use("/api/auth", require("./routes/authRoutes"));
 app.use("/api/users", require("./routes/userRoutes"));
@@ -53,12 +67,13 @@ app.use("/api/donate", require("./routes/donateRoutes"));
 app.use("/api/donations", require("./routes/donationsRoutes"));
 app.use("/api/campaign", require("./routes/campaignRoutes"));
 
-// Error handling middleware with CORS headers
+// Error handling middleware (ensure CORS headers on errors)
 app.use((err, req, res, next) => {
   const origin = req.headers.origin;
-  const originToAllow = allowedOrigins.includes(origin) ? origin : '*';
-  res.header('Access-Control-Allow-Origin', originToAllow);
-  res.header('Access-Control-Allow-Credentials', 'true');
+  if (allowedOrigins.includes(origin) || !origin) {
+    res.setHeader('Access-Control-Allow-Origin', origin || '*');
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+  }
   console.error(err.stack);
   res.status(500).json({ message: "Something went wrong!" });
 });
@@ -67,6 +82,5 @@ app.get("/", (req, res) => {
   res.send("Server is healthy");
 });
 
-// Start server
-const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+// For Vercel serverless, export as module (required for proper invocation)
+module.exports = app;
